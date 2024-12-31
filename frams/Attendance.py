@@ -7,85 +7,120 @@ import pickle
 from sklearn.neighbors import KNeighborsClassifier
 from datetime import datetime
 
+# Load necessary data and models
+def load_data():
+    try:
+        with open('data/names.pkl', 'rb') as w:
+            labels = pickle.load(w)
+
+        with open('data/face_data.pkl', 'rb') as f:
+            faces = pickle.load(f)
+
+        return labels, faces
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        exit()
+
 # Initialize video capture and face detection
-video = cv2.VideoCapture(0)
-facedetect = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+def initialize_camera():
+    try:
+        video = cv2.VideoCapture(0)
+        facedetect = cv2.CascadeClassifier('haarcascade_frontalface_default.xml')
+        if facedetect.empty():
+            raise FileNotFoundError("Error loading haarcascade_frontalface_default.xml")
+        return video, facedetect
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        exit()
 
-# Load saved face data and labels
-with open('data/names.pkl', 'rb') as w:
-    LABEL = pickle.load(w)
+# Ensure the Attendance directory exists
+def ensure_directory():
+    attendance_dir = "Attendance"
+    os.makedirs(attendance_dir, exist_ok=True)
+    return attendance_dir
 
-with open('data/face_data.pkl', 'rb') as f:
-    FACES = pickle.load(f)
+# Log attendance, ensuring no duplicates
+def log_attendance(file_path, col_names, attendance):
+    already_logged = set()
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as f:
+            reader = csv.reader(f)
+            already_logged = {row[0] for row in reader if row}
 
-# Train KNN model
-knn = KNeighborsClassifier(n_neighbors=5)
-knn.fit(FACES, LABEL)
-
-# Load background image and define column names
-imgbackground = cv2.imread('bg.png')
-COL_NAMES = ['Name', 'Time']
+    if attendance[0] not in already_logged:
+        with open(file_path, 'a') as f:
+            writer = csv.writer(f)
+            if not os.path.exists(file_path) or os.stat(file_path).st_size == 0:
+                writer.writerow(col_names)
+            writer.writerow(attendance)
 
 # Main loop
-while True:
-    ret, frame = video.read()
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    faces = facedetect.detectMultiScale(gray, 1.3, 5)
+def main():
+    labels, faces = load_data()
+    video, facedetect = initialize_camera()
 
-    for (x, y, w, h) in faces:
-        crop_img = frame[y:y + h, x:x + w]
-        resized_img = cv2.resize(crop_img, (50, 50)).flatten().reshape(1, -1)
-        output = knn.predict(resized_img)
-        ts = time.time()
-        date = datetime.fromtimestamp(ts).strftime('%d-%m-%Y')
-        timeStamp = datetime.fromtimestamp(ts).strftime('%H:%M-%S')
+    knn = KNeighborsClassifier(n_neighbors=5)
+    knn.fit(faces, labels)
 
-        # Attendance-related operations
-        attendance = [str(output[0]), str(timeStamp)]
+    try:
+        imgbackground = cv2.imread('bg.png')
+        if imgbackground is None:
+            raise FileNotFoundError("Error loading bg.png")
 
-        # Ensure the Attendance directory exists
-        attendance_dir = "Attendance"
-        os.makedirs(attendance_dir, exist_ok=True)  # Create the directory if it doesn't exist
+        col_names = ['Name', 'Time']
+        attendance_dir = ensure_directory()
 
-        file_path = f"{attendance_dir}/Attendance_ {date}.csv"
-        exist = os.path.exists(file_path)
+        while True:
+            ret, frame = video.read()
+            if not ret:
+                print("Error: Unable to access camera.")
+                break
 
-        # Draw rectangles for the face detection
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 1)
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (50, 50, 255), 2)
-        cv2.rectangle(frame, (x, y - 40), (x + w, y), (50, 50, 255), -1)
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            faces = facedetect.detectMultiScale(gray, 1.3, 5)
 
-        # Display the predicted name
-        cv2.putText(frame, str(output[0]), (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, (255, 255, 255), 1)
+            for (x, y, w, h) in faces:
+                crop_img = frame[y:y + h, x:x + w]
+                resized_img = cv2.resize(crop_img, (50, 50)).flatten().reshape(1, -1)
+                output = knn.predict(resized_img)
+                ts = time.time()
+                date = datetime.fromtimestamp(ts).strftime('%d-%m-%Y')
+                timeStamp = datetime.fromtimestamp(ts).strftime('%H:%M:%S')
 
-        if exist:
-            with open(file_path, '+a') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(attendance)
-                csvfile.close()
-        else:
-            with open(file_path, '+a') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(COL_NAMES)
-                writer.writerow(attendance)
-                csvfile.close()
+                # Attendance-related operations
+                attendance = [str(output[0]), str(timeStamp)]
+                file_path = f"{attendance_dir}/Attendance_{date}.csv"
+                log_attendance(file_path, col_names, attendance)
 
-        # Resize the frame to match the target region in the background image
-        resized_frame = cv2.resize(frame, (640, 480))
-        imgbackground[162:162 + 480, 55:55 + 640] = resized_frame
+                # Draw rectangles for the face detection
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
+                cv2.rectangle(frame, (x, y - 40), (x + w, y), (50, 50, 255), -1)
 
-        # Display the combined frame
-        cv2.imshow("frame", imgbackground)
+                # Display the predicted name
+                cv2.putText(frame, str(output[0]), (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-        # Handle key presses
-        k = cv2.waitKey(1)
-        if k == ord('o'):
-            time.sleep(5)
+            # Display the date and time on the frame
+            current_time = datetime.now().strftime('%d-%m-%Y %H:%M:%S')
+            cv2.putText(frame, current_time, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        if k == ord('q'):
-            break
+            # Resize the frame to match the target region in the background image
+            resized_frame = cv2.resize(frame, (640, 480))
+            imgbackground[162:162 + 480, 55:55 + 640] = resized_frame
 
-# Release video
-video.release()
-cv2.destroyAllWindows()
+            # Display the combined frame
+            cv2.imshow("Attendance System", imgbackground)
+
+            # Handle key presses
+            key = cv2.waitKey(1)
+            if key == ord('q'):
+                print("Exiting...")
+                break
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        video.release()
+        cv2.destroyAllWindows()
+
+if __name__ == "__main__":
+    main()
