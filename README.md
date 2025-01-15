@@ -105,7 +105,7 @@ git push origin feature-name
 
 📧 Contact
 
-Developed by Amrinder Singh, Garvid Joshi
+Developed by Amrinder Singh, Garvit Joshi
 📍 Dehradun
 📧 amrindersingh1820@icloud.com
 🔗 LinkedIn Profile
